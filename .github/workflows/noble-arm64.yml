@@ -1,6 +1,12 @@
 name: Vita3K Plus - Noble ARM64 tar
 on:
   workflow_dispatch:
+    inputs:
+      package_from_run:
+        description: 'Optional run ID containing Noble-ARM64-build-inputs; skip compilation'
+        required: false
+        default: ''
+        type: string
   push:
     paths:
       - '.github/workflows/noble-arm64.yml'
@@ -8,6 +14,7 @@ on:
       - 'patches/**'
 permissions:
   contents: read
+  actions: read
 concurrency:
   group: noble-arm64-${{ github.ref }}
   cancel-in-progress: false
@@ -55,7 +62,30 @@ jobs:
           qt_prefix="${qt_prefix%/lib/cmake/Qt6/Qt6Config.cmake}"
           echo "QT_PREFIX=$qt_prefix" >> "$GITHUB_ENV"
       - name: Build Release for ARMv8-A
+        if: ${{ inputs.package_from_run == '' }}
         run: bash scripts/build.sh
+      - name: Save compiled inputs for packaging retries
+        if: ${{ inputs.package_from_run == '' }}
+        run: python3 scripts/build-inputs.py save
+      - name: Retain compiled inputs
+        if: ${{ inputs.package_from_run == '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: Noble-ARM64-build-inputs
+          path: build-inputs.tar.gz
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+      - name: Download compiled inputs from an earlier run
+        if: ${{ inputs.package_from_run != '' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: Noble-ARM64-build-inputs
+          run-id: ${{ inputs.package_from_run }}
+          github-token: ${{ github.token }}
+      - name: Verify and restore compiled inputs
+        if: ${{ inputs.package_from_run != '' }}
+        run: python3 scripts/build-inputs.py restore
       - name: Bundle libraries, verify and create tar
         run: |
           set -euo pipefail

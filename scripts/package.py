@@ -92,7 +92,11 @@ def make_package(args):
     env = os.environ.copy()
     env["LD_LIBRARY_PATH"] = str(qt / "lib") + ":" + str(binary.parent)
     initial_elfs = [root / "Vita3K"] + sorted(plugin_root.rglob("*.so"))
-    queue = collections.deque(initial_elfs)
+    # Resolve against original locations. Partially copied $ORIGIN dependencies
+    # would otherwise resolve back into lib/ and look like conflicting inputs.
+    dependency_inputs = [binary] + [qt / "plugins" / obj.relative_to(plugin_root)
+                                  for obj in initial_elfs[1:]]
+    queue = collections.deque(dependency_inputs)
     copied = {}
     host_libraries = set()
     while queue:
@@ -105,13 +109,15 @@ def make_package(args):
             resolved = resolved.resolve()
             if soname in copied:
                 if copied[soname] != str(resolved):
-                    raise RuntimeError(f"Different libraries have the same SONAME: {soname}")
+                    previous = Path(copied[soname])
+                    if hashlib.sha256(previous.read_bytes()).digest() != hashlib.sha256(resolved.read_bytes()).digest():
+                        raise RuntimeError(f"Different libraries have the same SONAME: {soname}: {previous} and {resolved}")
                 continue
             require_arm64(resolved)
             destination = lib / soname
             shutil.copy2(resolved, destination)
             copied[soname] = str(resolved)
-            queue.append(destination)
+            queue.append(resolved)
 
             owners = subprocess.run(
                 ["dpkg-query", "-S", str(resolved)], text=True, capture_output=True

@@ -11,6 +11,9 @@ under patches/. The existing local RecoLove graphics patch is not applied.
 
 The workflow runs when its workflow/scripts are pushed, or from Actions > Run workflow.
 Successful output contains Vita3K-Plus-Noble-ARM64.tar.gz and its SHA256 checksum.
+Compiled inputs are retained for 14 days. To retry packaging without compiling,
+use Run workflow and enter the earlier run ID in package_from_run. Source,
+Qt version and build recipe must match the retained inputs.
 An artifact is uploaded only after ELF architecture, dependency and relocated CLI checks pass.
 
 Extract the tar on Switchroot Noble and run ./launch.sh in a desktop session.

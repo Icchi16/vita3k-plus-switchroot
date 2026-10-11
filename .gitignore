@@ -1,6 +1,7 @@
 source/
 build/
 dist/
+build-inputs.tar.gz
 .venv/
 .build-checks/
 .validation/
