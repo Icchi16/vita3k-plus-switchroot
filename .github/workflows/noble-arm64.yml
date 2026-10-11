@@ -5,6 +5,7 @@ on:
     paths:
       - '.github/workflows/noble-arm64.yml'
       - 'scripts/**'
+      - 'patches/**'
 permissions:
   contents: read
 concurrency:

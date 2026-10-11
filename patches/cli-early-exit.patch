@@ -1,0 +1,15 @@
+diff --git a/vita3k/main.cpp b/vita3k/main.cpp
+index 9435244d..6c92eadf 100644
+--- a/vita3k/main.cpp
++++ b/vita3k/main.cpp
+@@ -125,7 +125,9 @@ int main(int argc, char *argv[]) {
+     EmuEnvState emuenv;
+     const auto config_err = config::init_config(cfg, argc, argv, root_paths);
+ 
+-    fs::create_directories(cfg.get_vita_fs_path());
++    // Early CLI exits have not populated the configured filesystem path.
++    if (!cfg.get_vita_fs_path().empty())
++        fs::create_directories(cfg.get_vita_fs_path());
+ 
+     if (config_err != Success) {
+         if (config_err == QuitRequested) {

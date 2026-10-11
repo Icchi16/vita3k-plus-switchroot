@@ -1,0 +1,162 @@
+diff --git a/C/src/bit_reader.c b/C/src/bit_reader.c
+index 090352b..7e65817 100644
+--- a/C/src/bit_reader.c
++++ b/C/src/bit_reader.c
+@@ -7,10 +7,14 @@ void InitBitReaderCxt(BitReaderCxt* br, const void * buffer)
+ {
+ 	br->Buffer = buffer;
+ 	br->Position = 0;
++	br->BufferSize = -1;
++	br->Truncated = 0;
+ }
+ 
+ int ReadInt(BitReaderCxt* br, const int bits)
+ {
++	if (br->BufferSize >= 0 && (br->Position < 0 || (long long)br->Position + bits > (long long)br->BufferSize * 8))
++		br->Truncated = 1;
+ 	const int value = PeekInt(br, bits);
+ 	br->Position += bits;
+ 	return value;
+@@ -18,16 +22,13 @@ int ReadInt(BitReaderCxt* br, const int bits)
+ 
+ int ReadSignedInt(BitReaderCxt* br, const int bits)
+ {
+-	const int value = PeekInt(br, bits);
+-	br->Position += bits;
+-	return SignExtend32(value, bits);
++	return SignExtend32(ReadInt(br, bits), bits);
+ }
+ 
+ int ReadOffsetBinary(BitReaderCxt* br, const int bits)
+ {
+ 	const int offset = 1 << (bits - 1);
+-	const int value = PeekInt(br, bits) - offset;
+-	br->Position += bits;
++	const int value = ReadInt(br, bits) - offset;
+ 	return value;
+ }
+ 
+@@ -36,6 +37,20 @@ int PeekInt(BitReaderCxt* br, const int bits)
+ 	const int byteIndex = br->Position / 8;
+ 	const int bitIndex = br->Position % 8;
+ 	const unsigned char* buffer = br->Buffer;
++	// Huffman lookup may peek beyond the last code. Pad that lookahead with
++	// zeroes; only consumed bits are required to fit the supplied buffer.
++	if (br->BufferSize >= 0 && (byteIndex < 0 || (long long)byteIndex + 4 > br->BufferSize || bits > 17))
++	{
++		unsigned int value = 0;
++		for (int i = 0; i < bits; ++i)
++		{
++			const long long position = (long long)br->Position + i;
++			value <<= 1;
++			if (position >= 0 && position < (long long)br->BufferSize * 8)
++				value |= (buffer[position / 8] >> (7 - position % 8)) & 1;
++		}
++		return (int)value;
++	}
+ 
+ 	if (bits <= 9)
+ 	{
+diff --git a/C/src/bit_reader.h b/C/src/bit_reader.h
+index 1271187..0c650f1 100644
+--- a/C/src/bit_reader.h
++++ b/C/src/bit_reader.h
+@@ -3,6 +3,8 @@
+ typedef struct {
+ 	const unsigned char * Buffer;
+ 	int Position;
++	int BufferSize; // -1 retains the original unbounded API.
++	int Truncated;
+ } BitReaderCxt;
+ 
+ // Make MSVC compiler happy. Leave const in for value parameters
+diff --git a/C/src/decoder.c b/C/src/decoder.c
+index 9b9f0ba..65fdb2e 100644
+--- a/C/src/decoder.c
++++ b/C/src/decoder.c
+@@ -14,9 +14,15 @@ static void ApplyIntensityStereo(Block* block);
+ static void PcmFloatToShort(Frame* frame, short* pcmOut);
+ 
+ At9Status Decode(Atrac9Handle* handle, const unsigned char* audio, unsigned char* pcm, int* bytesUsed)
++{
++	return DecodeBounded(handle, audio, -1, pcm, bytesUsed);
++}
++
++At9Status DecodeBounded(Atrac9Handle* handle, const unsigned char* audio, int audioBytes, unsigned char* pcm, int* bytesUsed)
+ {
+ 	BitReaderCxt br;
+ 	InitBitReaderCxt(&br, audio);
++	br.BufferSize = audioBytes;
+ 	ERROR_CHECK(DecodeFrame(&handle->Frame, &br));
+ 
+ 	PcmFloatToShort(&handle->Frame, (short*)pcm);
+@@ -27,7 +33,10 @@ At9Status Decode(Atrac9Handle* handle, const unsigned char* audio, unsigned char
+ 
+ static At9Status DecodeFrame(Frame* frame, BitReaderCxt* br)
+ {
+-	ERROR_CHECK(UnpackFrame(frame, br));
++	const At9Status unpackStatus = UnpackFrame(frame, br);
++	if (br->BufferSize >= 0 && (br->Truncated || (long long)br->Position > (long long)br->BufferSize * 8))
++		return ERR_UNPACK_INPUT_TOO_SHORT;
++	ERROR_CHECK(unpackStatus);
+ 
+ 	for (int i = 0; i < frame->Config->ChannelConfig.BlockCount; i++)
+ 	{
+diff --git a/C/src/decoder.h b/C/src/decoder.h
+index 69f8ac5..c6410f1 100644
+--- a/C/src/decoder.h
++++ b/C/src/decoder.h
+@@ -4,4 +4,5 @@
+ #include "structures.h"
+ 
+ At9Status Decode(Atrac9Handle* handle, const unsigned char* audio, unsigned char* pcm, int* bytesUsed);
++At9Status DecodeBounded(Atrac9Handle* handle, const unsigned char* audio, int audioBytes, unsigned char* pcm, int* bytesUsed);
+ int GetCodecInfo(Atrac9Handle* handle, CodecInfo* pCodecInfo);
+diff --git a/C/src/error_codes.h b/C/src/error_codes.h
+index bbdece6..bc92576 100644
+--- a/C/src/error_codes.h
++++ b/C/src/error_codes.h
+@@ -22,7 +22,8 @@ typedef enum At9Status
+ 	ERR_UNPACK_SCALE_FACTOR_MODE_INVALID,
+ 	ERR_UNPACK_SCALE_FACTOR_OOB,
+ 
+-	ERR_UNPACK_EXTENSION_DATA_INVALID
++	ERR_UNPACK_EXTENSION_DATA_INVALID,
++	ERR_UNPACK_INPUT_TOO_SHORT
+ } At9Status;
+ 
+ #define ERROR_CHECK(x) do { \
+diff --git a/C/src/libatrac9.c b/C/src/libatrac9.c
+index 6434cb5..2b073ba 100644
+--- a/C/src/libatrac9.c
++++ b/C/src/libatrac9.c
+@@ -25,6 +25,16 @@ int Atrac9Decode(void* handle, const unsigned char *pAtrac9Buffer, short *pPcmBu
+ 	return Decode(handle, pAtrac9Buffer, (unsigned char*)pPcmBuffer, pNBytesUsed);
+ }
+ 
++int Atrac9DecodeBounded(void* handle, const unsigned char *pAtrac9Buffer, int bufferBytes, short *pPcmBuffer, int *pNBytesUsed)
++{
++	if (!pNBytesUsed) return ERR_BAD_CONFIG_DATA;
++	*pNBytesUsed = 0;
++	if (!handle || !pAtrac9Buffer || !pPcmBuffer || bufferBytes < 0 || !((Atrac9Handle*)handle)->Initialized)
++		return ERR_BAD_CONFIG_DATA;
++	if (bufferBytes == 0) return ERR_UNPACK_INPUT_TOO_SHORT;
++	return DecodeBounded(handle, pAtrac9Buffer, bufferBytes, (unsigned char*)pPcmBuffer, pNBytesUsed);
++}
++
+ int Atrac9GetCodecInfo(void* handle, Atrac9CodecInfo * pCodecInfo)
+ {
+ 	return GetCodecInfo(handle, (CodecInfo*)pCodecInfo);
+diff --git a/C/src/libatrac9.h b/C/src/libatrac9.h
+index 9ec323a..3dd18f7 100644
+--- a/C/src/libatrac9.h
++++ b/C/src/libatrac9.h
+@@ -22,6 +22,8 @@ void Atrac9ReleaseHandle(void* handle);
+ int Atrac9InitDecoder(void* handle, unsigned char *pConfigData);
+ int Atrac9Decode(void* handle, const unsigned char *pAtrac9Buffer, short *pPcmBuffer, int *pNBytesUsed);
+ 
++int Atrac9DecodeBounded(void* handle, const unsigned char *pAtrac9Buffer, int bufferBytes, short *pPcmBuffer, int *pNBytesUsed);
++
+ int Atrac9GetCodecInfo(void* handle, Atrac9CodecInfo *pCodecInfo);
+ 
+ #ifdef __cplusplus

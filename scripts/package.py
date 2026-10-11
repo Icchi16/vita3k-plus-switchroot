@@ -72,6 +72,9 @@ def make_package(args):
     license_source = Path(__file__).resolve().parent.parent / "licenses"
     if license_source.is_dir():
         shutil.copytree(license_source, licenses / "Qt-license-texts")
+    build_support = Path(__file__).resolve().parent.parent
+    shutil.copytree(build_support / "patches", root / "build-support/patches")
+    shutil.copy2(build_support / "scripts/prepare-source.py", root / "build-support/prepare-source.py")
 
     plugin_root = root / "plugins"
     for group in PLUGIN_GROUPS:
@@ -152,7 +155,9 @@ def make_package(args):
         f"Commit: {args.source_sha}\n"
         "Qt SDK: 6.11.0 linux_gcc_arm64 (official Qt packages)\n"
         "Qt sources: https://download.qt.io/official_releases/qt/6.11/6.11.0/\n"
-        "Build scripts: repository containing this Actions workflow\n\n"
+        "Build scripts: https://github.com/Icchi16/vita3k-plus-switchroot\n"
+        "Build support: CLI early-exit guard, bounded LibAtrac9 API, generated metadata.\n"
+        "Exact patches and metadata generator included in build-support/.\n\n"
         "Submodule revisions:\n" + status,
         encoding="utf-8",
     )

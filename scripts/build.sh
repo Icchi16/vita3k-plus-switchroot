@@ -2,6 +2,7 @@
 set -euo pipefail
 test "$(uname -m)" = aarch64
 : "${QT_PREFIX:?Missing Qt SDK path}"
+python3 scripts/prepare-source.py
 mkdir -p build
 cmake -S source -B build -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
