@@ -1,0 +1,84 @@
+name: Vita3K Plus - Noble ARM64 tar
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/noble-arm64.yml'
+      - 'scripts/**'
+permissions:
+  contents: read
+concurrency:
+  group: noble-arm64-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 180
+    env:
+      SOURCE_REPO: https://github.com/nckstwrt/Vita3K-Plus.git
+      SOURCE_SHA: e2331f809a50f093ca1e2920e47e7dba67d08f3d
+      QT_VERSION: 6.11.0
+      BUILD_JOBS: '2'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Noble build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential clang lld cmake ninja-build git pkg-config python3-venv \
+            patchelf file binutils ca-certificates curl unzip zlib1g-dev \
+            libsdl2-dev libgtk-3-dev libssl-dev libcurl4-openssl-dev \
+            libboost-filesystem-dev libboost-system-dev libasound2-dev libpulse-dev \
+            libudev-dev libdbus-1-dev libwayland-dev libxkbcommon-dev libxkbcommon-x11-dev \
+            libgl1-mesa-dev libegl1-mesa-dev libvulkan-dev \
+            libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 \
+            libxcb-render-util0 libxcb-xinerama0 libxcb-xkb1 \
+            libfontconfig1 libfreetype6 libgstreamer1.0-0 \
+            libgstreamer-plugins-base1.0-0 xdg-desktop-portal
+      - name: Fetch pinned Plus source and Qt ARM64 SDK
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = aarch64
+          git init source
+          git -C source remote add origin "$SOURCE_REPO"
+          git -C source fetch --depth 1 origin "$SOURCE_SHA"
+          git -C source checkout --detach FETCH_HEAD
+          test "$(git -C source rev-parse HEAD)" = "$SOURCE_SHA"
+          git -C source submodule update --init --recursive --jobs "$BUILD_JOBS"
+          python3 -m venv .venv
+          .venv/bin/python -m pip install aqtinstall==3.3.0
+          .venv/bin/python -m aqt install-qt linux_arm64 desktop "$QT_VERSION" \
+            linux_gcc_arm64 -O "$RUNNER_TEMP/qt" -m qtmultimedia
+          qt_prefix="$(find "$RUNNER_TEMP/qt/$QT_VERSION" -name Qt6Config.cmake -print -quit)"
+          test -n "$qt_prefix"
+          qt_prefix="${qt_prefix%/lib/cmake/Qt6/Qt6Config.cmake}"
+          echo "QT_PREFIX=$qt_prefix" >> "$GITHUB_ENV"
+      - name: Build Release for ARMv8-A
+        run: bash scripts/build.sh
+      - name: Bundle libraries, verify and create tar
+        run: |
+          set -euo pipefail
+          export LD_LIBRARY_PATH="$QT_PREFIX/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+          python3 scripts/package.py --binary build/bin/Vita3K --qt "$QT_PREFIX" \
+            --source source --output dist --source-sha "$SOURCE_SHA"
+      - name: Upload tar and checksum
+        uses: actions/upload-artifact@v4
+        with:
+          name: Vita3K-Plus-Noble-ARM64-${{ github.run_number }}
+          path: |
+            dist/*.tar.gz
+            dist/*.sha256
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+      - name: Upload diagnostic logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Noble-ARM64-logs-${{ github.run_number }}
+          path: |
+            build/configure.log
+            build/compile.log
+            dist/verification.json
+          if-no-files-found: ignore
+          retention-days: 14

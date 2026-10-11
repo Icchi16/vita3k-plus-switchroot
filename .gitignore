@@ -1,0 +1,7 @@
+source/
+build/
+dist/
+.venv/
+.build-checks/
+.validation/
+**/__pycache__/
