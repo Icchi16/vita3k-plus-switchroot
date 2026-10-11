@@ -69,6 +69,16 @@ def make_package(args):
             raise RuntimeError(f"Build resources missing: {source_dir}")
         shutil.copytree(source_dir, root / name)
     shutil.copy2(args.source / "COPYING.txt", licenses / "Vita3K-COPYING.txt")
+    # Preserve notices from statically linked third-party source dependencies.
+    external = args.source / "external"
+    notice_name = re.compile(r"^(licen[sc]e|copying|notice|copyright)(?:$|[._-])", re.I)
+    for notice in external.rglob("*"):
+        if (notice.is_file() and ".git" not in notice.parts
+                and notice.suffix.lower() in ("", ".txt", ".md", ".rst", ".html")
+                and notice_name.match(notice.name)):
+            destination = licenses / "source-dependencies" / notice.relative_to(external)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(notice, destination)
     license_source = Path(__file__).resolve().parent.parent / "licenses"
     if license_source.is_dir():
         shutil.copytree(license_source, licenses / "Qt-license-texts")
