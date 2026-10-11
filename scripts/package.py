@@ -90,10 +90,15 @@ def make_package(args):
     for group in PLUGIN_GROUPS:
         folder = qt / "plugins" / group
         if folder.is_dir():
-            shutil.copytree(folder, plugin_root / group)
+            # FFmpeg is Qt's default multimedia backend. GStreamer also needs
+            # its own dynamically discovered codec plugins and system setup.
+            ignore = shutil.ignore_patterns("*gstreamer*") if group == "multimedia" else None
+            shutil.copytree(folder, plugin_root / group, ignore=ignore)
     for required in ("libqxcb.so", "libqoffscreen.so"):
         if not (plugin_root / "platforms" / required).is_file():
             raise RuntimeError(f"Required Qt platform plugin missing: {required}")
+    if not (plugin_root / "multimedia/libffmpegmediaplugin.so").is_file():
+        raise RuntimeError("Required Qt FFmpeg multimedia plugin missing")
     for folder_name in ("Licenses", "licenses", "LICENSES"):
         folder = qt / folder_name
         if folder.is_dir():
@@ -154,6 +159,7 @@ def make_package(args):
         'export LD_LIBRARY_PATH="$app_dir/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"\n'
         'export QT_PLUGIN_PATH="$app_dir/plugins"\n'
         'export QT_QPA_PLATFORM_PLUGIN_PATH="$app_dir/plugins/platforms"\n'
+        'export QT_MEDIA_BACKEND="${QT_MEDIA_BACKEND:-ffmpeg}"\n'
         'if [ -z "${QT_QPA_PLATFORM:-}" ] && [ -n "${DISPLAY:-}" ]; then\n'
         '  export QT_QPA_PLATFORM=xcb\n'
         'fi\n'
