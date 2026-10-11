@@ -111,6 +111,15 @@ def make_package(args):
     # would otherwise resolve back into lib/ and look like conflicting inputs.
     dependency_inputs = [binary] + [qt / "plugins" / obj.relative_to(plugin_root)
                                   for obj in initial_elfs[1:]]
+    unresolved = []
+    for obj in dependency_inputs:
+        require_arm64(obj)
+        try:
+            dependencies(obj, env)
+        except RuntimeError as error:
+            unresolved.append(str(error))
+    if unresolved:
+        raise RuntimeError("Runtime preflight found missing libraries:\n" + "\n".join(unresolved))
     queue = collections.deque(dependency_inputs)
     copied = {}
     host_libraries = set()
